@@ -9,6 +9,7 @@ ObjectSelector.pathFilteredObjects = {} -- 白色外框的物體（路徑過濾�
 ObjectSelector.allSelectedObjects = {} -- 所有選取的物體（綠+白）
 ObjectSelector.isSelectionMode = false -- 一開始關閉選取模式
 ObjectSelector.currentTeleportIndex = 1 -- 當前傳送索引
+ObjectSelector.isTeleporting = false -- 是否正在自動傳送
 
 -- GUI 變數
 ObjectSelector.guiVisible = false
@@ -399,6 +400,9 @@ function ObjectSelector:FilterByPath(pathIndex, clickedObj)
         table.insert(filterPath, clickedPath[i])
     end
     
+    -- 取得點擊物體的名稱（用於同名搜尋）
+    local targetName = clickedObj.Name
+    
     -- 遍歷 workspace 找到符合路徑前綴的物體
     local function searchDescendants(parent, currentDepth)
         if currentDepth > #filterPath then return end
@@ -415,9 +419,11 @@ function ObjectSelector:FilterByPath(pathIndex, clickedObj)
                 end
             end
             
-            -- 檢查後續路徑是否不同
+            -- 檢查後續路徑是否不同 或 同名物件
             if matches and #childPath > #filterPath then
                 local isDifferent = false
+                local isSameName = (child.Name == targetName)
+                
                 if #childPath > #clickedPath then
                     isDifferent = true
                 else
@@ -429,7 +435,8 @@ function ObjectSelector:FilterByPath(pathIndex, clickedObj)
                     end
                 end
                 
-                if isDifferent then
+                -- 如果路徑不同或是同名物件，就加入
+                if (isDifferent or isSameName) and child ~= clickedObj then
                     -- 檢查是否已在綠色選取中
                     local isGreenSelected = false
                     for _, selected in ipairs(self.selectedObjects) do
@@ -536,7 +543,13 @@ function ObjectSelector:UpdateGUI()
     
     if teleportToButton then
         local count = #self.allSelectedObjects
-        teleportToButton.Text = string.format("🚀 傳送到物體 (%d/%d)", self.currentTeleportIndex, count)
+        if self.isTeleporting then
+            teleportToButton.Text = string.format("⏸ 停止自動傳送 (%d/%d)", self.currentTeleportIndex, count)
+            teleportToButton.BackgroundColor3 = Color3.fromRGB(200, 100, 0)
+        else
+            teleportToButton.Text = string.format("🚀 傳送到物體 (%d)", count)
+            teleportToButton.BackgroundColor3 = Color3.fromRGB(0, 150, 255)
+        end
     end
     
     if teleportHereButton then
@@ -582,7 +595,7 @@ function ObjectSelector:UpdateGUI()
     end
 end
 
--- 傳送到物體
+-- 傳送到物體（自動輪流）
 function ObjectSelector:TeleportToObject()
     if #self.allSelectedObjects == 0 then return end
     
@@ -592,32 +605,65 @@ function ObjectSelector:TeleportToObject()
     local humanoidRootPart = character:FindFirstChild("HumanoidRootPart")
     if not humanoidRootPart then return end
     
-    -- 循環索引
-    if self.currentTeleportIndex > #self.allSelectedObjects then
+    -- 開始自動輪流傳送
+    if not self.isTeleporting then
+        self.isTeleporting = true
         self.currentTeleportIndex = 1
-    end
-    
-    local targetObj = self.allSelectedObjects[self.currentTeleportIndex]
-    if targetObj then
-        local targetPos
-        if targetObj:IsA("BasePart") then
-            targetPos = targetObj.Position + Vector3.new(0, 5, 0)
-        elseif targetObj:IsA("Model") then
-            local primaryPart = targetObj.PrimaryPart or targetObj:FindFirstChildWhichIsA("BasePart")
-            if primaryPart then
-                targetPos = primaryPart.Position + Vector3.new(0, 5, 0)
-            end
-        end
         
-        if targetPos then
-            humanoidRootPart.CFrame = CFrame.new(targetPos)
-            self.currentTeleportIndex = self.currentTeleportIndex + 1
+        -- 創建循環傳送
+        spawn(function()
+            while self.isTeleporting and #self.allSelectedObjects > 0 do
+                -- 循環索引
+                if self.currentTeleportIndex > #self.allSelectedObjects then
+                    self.currentTeleportIndex = 1
+                end
+                
+                local targetObj = self.allSelectedObjects[self.currentTeleportIndex]
+                if targetObj then
+                    local targetPos
+                    if targetObj:IsA("BasePart") then
+                        targetPos = targetObj.Position + Vector3.new(0, 5, 0)
+                    elseif targetObj:IsA("Model") then
+                        local primaryPart = targetObj.PrimaryPart or targetObj:FindFirstChildWhichIsA("BasePart")
+                        if primaryPart then
+                            targetPos = primaryPart.Position + Vector3.new(0, 5, 0)
+                        end
+                    end
+                    
+                    if targetPos then
+                        humanoidRootPart.CFrame = CFrame.new(targetPos)
+                        self.currentTeleportIndex = self.currentTeleportIndex + 1
+                        self:UpdateGUI()
+                    end
+                end
+                
+                wait(0.1) -- 每0.1秒傳送到下一個物體
+            end
+            
+            self.isTeleporting = false
             self:UpdateGUI()
+        end)
+        
+        -- 更新按鈕文字
+        local teleportToButton = self.mainFrame:FindFirstChild("TeleportToButton")
+        if teleportToButton then
+            teleportToButton.Text = "⏸ 停止自動傳送"
+            teleportToButton.BackgroundColor3 = Color3.fromRGB(200, 100, 0)
+        end
+    else
+        -- 停止自動傳送
+        self.isTeleporting = false
+        self.currentTeleportIndex = 1
+        
+        local teleportToButton = self.mainFrame:FindFirstChild("TeleportToButton")
+        if teleportToButton then
+            teleportToButton.Text = string.format("🚀 傳送到物體 (1/%d)", #self.allSelectedObjects)
+            teleportToButton.BackgroundColor3 = Color3.fromRGB(0, 150, 255)
         end
     end
 end
 
--- 傳送物體到玩家
+-- 傳送物體到玩家（所有物體到同一位置）
 function ObjectSelector:TeleportObjectsHere()
     if #self.allSelectedObjects == 0 then return end
     
@@ -628,16 +674,16 @@ function ObjectSelector:TeleportObjectsHere()
     if not humanoidRootPart then return end
     
     local playerPos = humanoidRootPart.Position
+    local targetPos = playerPos + Vector3.new(0, 2, 5) -- 玩家前方
     
-    for i, obj in ipairs(self.allSelectedObjects) do
-        local offset = Vector3.new((i - 1) * 3, 0, 0)
-        
+    -- 將所有選取的物體傳送到同一位置
+    for _, obj in ipairs(self.allSelectedObjects) do
         if obj:IsA("BasePart") then
-            obj.CFrame = CFrame.new(playerPos + offset + Vector3.new(0, 2, 5))
+            obj.CFrame = CFrame.new(targetPos)
         elseif obj:IsA("Model") then
             local primaryPart = obj.PrimaryPart or obj:FindFirstChildWhichIsA("BasePart")
             if primaryPart then
-                obj:MoveTo(playerPos + offset + Vector3.new(0, 2, 5))
+                obj:MoveTo(targetPos)
             end
         end
     end
