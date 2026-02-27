@@ -1,15 +1,17 @@
 -- 物體選取器腳本 (平板觸控版)
 -- 功能：觸控選取物體顯示綠色外框、路徑顯示、路徑過濾、傳送功能
+-- 更新：每個已選取物件列表項目新增 "+" 按鈕，可展開「單獨選取」和「解除選取」
 
 local ObjectSelector = {}
 
 -- 選取狀態
-ObjectSelector.selectedObjects = {} -- 綠色外框的物體（直接點擊）
-ObjectSelector.pathFilteredObjects = {} -- 白色外框的物體（路徑過濾）
-ObjectSelector.allSelectedObjects = {} -- 所有選取的物體（綠+白）
-ObjectSelector.isSelectionMode = false -- 一開始關閉選取模式
-ObjectSelector.currentTeleportIndex = 1 -- 當前傳送索引
-ObjectSelector.isTeleporting = false -- 是否正在自動傳送
+ObjectSelector.selectedObjects = {}       -- 綠色外框的物體（直接點擊）
+ObjectSelector.pathFilteredObjects = {}   -- 白色外框的物體（路徑過濾）
+ObjectSelector.allSelectedObjects = {}    -- 所有選取的物體（綠+白）
+ObjectSelector.soloObjects = {}           -- ★ 單獨選取狀態集合 {[obj]=true}
+ObjectSelector.isSelectionMode = false
+ObjectSelector.currentTeleportIndex = 1
+ObjectSelector.isTeleporting = false
 
 -- GUI 變數
 ObjectSelector.guiVisible = false
@@ -24,20 +26,31 @@ local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
 
--- 本地玩家
 local player = Players.LocalPlayer
 local camera = workspace.CurrentCamera
 
+-- ★ 取得實際作用的物件（有單獨選取就只用那些，否則全部）
+function ObjectSelector:GetActiveObjects()
+    local hasSolo = false
+    for _ in pairs(self.soloObjects) do hasSolo = true; break end
+    if hasSolo then
+        local list = {}
+        for obj in pairs(self.soloObjects) do
+            table.insert(list, obj)
+        end
+        return list
+    end
+    return self.allSelectedObjects
+end
+
 -- 初始化 GUI
 function ObjectSelector:InitializeGUI()
-    -- 創建 ScreenGui
     self.screenGui = Instance.new("ScreenGui")
     self.screenGui.Name = "ObjectSelectorGUI"
     self.screenGui.ResetOnSpawn = false
     self.screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
     self.screenGui.Parent = player:WaitForChild("PlayerGui")
-    
-    -- 主框架 (適中的尺寸)
+
     self.mainFrame = Instance.new("Frame")
     self.mainFrame.Name = "MainFrame"
     self.mainFrame.Size = UDim2.new(0, 380, 0, 550)
@@ -46,27 +59,25 @@ function ObjectSelector:InitializeGUI()
     self.mainFrame.BorderSizePixel = 3
     self.mainFrame.BorderColor3 = Color3.fromRGB(0, 255, 0)
     self.mainFrame.Active = true
-    self.mainFrame.Draggable = false -- 我們會自己處理拖動
+    self.mainFrame.Draggable = false
     self.mainFrame.Parent = self.screenGui
-    
-    -- 圓角
+
     local corner = Instance.new("UICorner")
     corner.CornerRadius = UDim.new(0, 12)
     corner.Parent = self.mainFrame
-    
-    -- 標題欄 (可拖動區域)
+
+    -- 標題欄
     local titleBar = Instance.new("Frame")
     titleBar.Name = "TitleBar"
     titleBar.Size = UDim2.new(1, 0, 0, 45)
     titleBar.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
     titleBar.BorderSizePixel = 0
     titleBar.Parent = self.mainFrame
-    
+
     local titleBarCorner = Instance.new("UICorner")
     titleBarCorner.CornerRadius = UDim.new(0, 12)
     titleBarCorner.Parent = titleBar
-    
-    -- 標題文字
+
     local title = Instance.new("TextLabel")
     title.Name = "Title"
     title.Size = UDim2.new(1, -100, 1, 0)
@@ -78,11 +89,9 @@ function ObjectSelector:InitializeGUI()
     title.Font = Enum.Font.SourceSansBold
     title.TextXAlignment = Enum.TextXAlignment.Left
     title.Parent = titleBar
-    
-    -- 添加拖動功能
+
     self:MakeDraggable(titleBar)
-    
-    -- 關閉按鈕
+
     local closeButton = Instance.new("TextButton")
     closeButton.Name = "CloseButton"
     closeButton.Size = UDim2.new(0, 38, 0, 38)
@@ -93,17 +102,15 @@ function ObjectSelector:InitializeGUI()
     closeButton.TextSize = 22
     closeButton.Font = Enum.Font.SourceSansBold
     closeButton.Parent = titleBar
-    
     local closeCorner = Instance.new("UICorner")
     closeCorner.CornerRadius = UDim.new(0, 8)
     closeCorner.Parent = closeButton
-    
     closeButton.MouseButton1Click:Connect(function()
         self.guiVisible = false
         self.mainFrame.Visible = false
     end)
-    
-    -- 選取模式切換按鈕
+
+    -- 選取模式按鈕
     local toggleButton = Instance.new("TextButton")
     toggleButton.Name = "ToggleSelectionButton"
     toggleButton.Size = UDim2.new(0, 178, 0, 42)
@@ -114,11 +121,9 @@ function ObjectSelector:InitializeGUI()
     toggleButton.TextSize = 17
     toggleButton.Font = Enum.Font.SourceSansBold
     toggleButton.Parent = self.mainFrame
-    
     local toggleCorner = Instance.new("UICorner")
     toggleCorner.CornerRadius = UDim.new(0, 8)
     toggleCorner.Parent = toggleButton
-    
     toggleButton.MouseButton1Click:Connect(function()
         self.isSelectionMode = not self.isSelectionMode
         if self.isSelectionMode then
@@ -129,7 +134,7 @@ function ObjectSelector:InitializeGUI()
             toggleButton.BackgroundColor3 = Color3.fromRGB(200, 100, 0)
         end
     end)
-    
+
     -- 清除選取按鈕
     local clearButton = Instance.new("TextButton")
     clearButton.Name = "ClearButton"
@@ -141,15 +146,13 @@ function ObjectSelector:InitializeGUI()
     clearButton.TextSize = 17
     clearButton.Font = Enum.Font.SourceSansBold
     clearButton.Parent = self.mainFrame
-    
     local clearCorner = Instance.new("UICorner")
     clearCorner.CornerRadius = UDim.new(0, 8)
     clearCorner.Parent = clearButton
-    
     clearButton.MouseButton1Click:Connect(function()
         self:ClearAllSelections()
     end)
-    
+
     -- 路徑顯示標題
     local pathLabel = Instance.new("TextLabel")
     pathLabel.Name = "PathLabel"
@@ -163,11 +166,10 @@ function ObjectSelector:InitializeGUI()
     pathLabel.Font = Enum.Font.SourceSansBold
     pathLabel.TextXAlignment = Enum.TextXAlignment.Left
     pathLabel.Parent = self.mainFrame
-    
     local pathLabelCorner = Instance.new("UICorner")
     pathLabelCorner.CornerRadius = UDim.new(0, 6)
     pathLabelCorner.Parent = pathLabel
-    
+
     -- 路徑滾動框架
     local pathScrollFrame = Instance.new("ScrollingFrame")
     pathScrollFrame.Name = "PathScrollFrame"
@@ -178,18 +180,15 @@ function ObjectSelector:InitializeGUI()
     pathScrollFrame.BorderColor3 = Color3.fromRGB(80, 80, 80)
     pathScrollFrame.ScrollBarThickness = 10
     pathScrollFrame.Parent = self.mainFrame
-    
     local pathScrollCorner = Instance.new("UICorner")
     pathScrollCorner.CornerRadius = UDim.new(0, 8)
     pathScrollCorner.Parent = pathScrollFrame
-    
-    -- 列表布局
     local pathLayout = Instance.new("UIListLayout")
     pathLayout.Name = "PathLayout"
     pathLayout.SortOrder = Enum.SortOrder.LayoutOrder
     pathLayout.Padding = UDim.new(0, 3)
     pathLayout.Parent = pathScrollFrame
-    
+
     -- 傳送到物體按鈕
     local teleportToButton = Instance.new("TextButton")
     teleportToButton.Name = "TeleportToButton"
@@ -201,15 +200,13 @@ function ObjectSelector:InitializeGUI()
     teleportToButton.TextSize = 19
     teleportToButton.Font = Enum.Font.SourceSansBold
     teleportToButton.Parent = self.mainFrame
-    
     local teleportToCorner = Instance.new("UICorner")
     teleportToCorner.CornerRadius = UDim.new(0, 8)
     teleportToCorner.Parent = teleportToButton
-    
     teleportToButton.MouseButton1Click:Connect(function()
         self:TeleportToObject()
     end)
-    
+
     -- 傳送物體到玩家按鈕
     local teleportHereButton = Instance.new("TextButton")
     teleportHereButton.Name = "TeleportHereButton"
@@ -221,15 +218,13 @@ function ObjectSelector:InitializeGUI()
     teleportHereButton.TextSize = 19
     teleportHereButton.Font = Enum.Font.SourceSansBold
     teleportHereButton.Parent = self.mainFrame
-    
     local teleportHereCorner = Instance.new("UICorner")
     teleportHereCorner.CornerRadius = UDim.new(0, 8)
     teleportHereCorner.Parent = teleportHereButton
-    
     teleportHereButton.MouseButton1Click:Connect(function()
         self:TeleportObjectsHere()
     end)
-    
+
     -- 選取列表標題
     local listLabel = Instance.new("TextLabel")
     listLabel.Name = "ListLabel"
@@ -243,11 +238,10 @@ function ObjectSelector:InitializeGUI()
     listLabel.Font = Enum.Font.SourceSansBold
     listLabel.TextXAlignment = Enum.TextXAlignment.Left
     listLabel.Parent = self.mainFrame
-    
     local listLabelCorner = Instance.new("UICorner")
     listLabelCorner.CornerRadius = UDim.new(0, 6)
     listLabelCorner.Parent = listLabel
-    
+
     -- 選取列表滾動框架
     local listScrollFrame = Instance.new("ScrollingFrame")
     listScrollFrame.Name = "ListScrollFrame"
@@ -258,18 +252,15 @@ function ObjectSelector:InitializeGUI()
     listScrollFrame.BorderColor3 = Color3.fromRGB(80, 80, 80)
     listScrollFrame.ScrollBarThickness = 10
     listScrollFrame.Parent = self.mainFrame
-    
     local listScrollCorner = Instance.new("UICorner")
     listScrollCorner.CornerRadius = UDim.new(0, 8)
     listScrollCorner.Parent = listScrollFrame
-    
-    -- 列表布局
     local listLayout = Instance.new("UIListLayout")
     listLayout.Name = "ListLayout"
     listLayout.SortOrder = Enum.SortOrder.LayoutOrder
     listLayout.Padding = UDim.new(0, 3)
     listLayout.Parent = listScrollFrame
-    
+
     self.mainFrame.Visible = false
 end
 
@@ -284,21 +275,18 @@ function ObjectSelector:MakeDraggable(frame)
         if dragging then
             local delta = input.Position - dragStart
             self.mainFrame.Position = UDim2.new(
-                startPos.X.Scale,
-                startPos.X.Offset + delta.X,
-                startPos.Y.Scale,
-                startPos.Y.Offset + delta.Y
+                startPos.X.Scale, startPos.X.Offset + delta.X,
+                startPos.Y.Scale, startPos.Y.Offset + delta.Y
             )
         end
     end
 
     frame.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 or 
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or
            input.UserInputType == Enum.UserInputType.Touch then
             dragging = true
             dragStart = input.Position
             startPos = self.mainFrame.Position
-
             input.Changed:Connect(function()
                 if input.UserInputState == Enum.UserInputState.End then
                     dragging = false
@@ -306,22 +294,17 @@ function ObjectSelector:MakeDraggable(frame)
             end)
         end
     end)
-
     frame.InputChanged:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseMovement or 
+        if input.UserInputType == Enum.UserInputType.MouseMovement or
            input.UserInputType == Enum.UserInputType.Touch then
             dragInput = input
         end
     end)
-
     UserInputService.InputChanged:Connect(function(input)
-        if input == dragInput and dragging then
-            update(input)
-        end
+        if input == dragInput and dragging then update(input) end
     end)
 end
 
--- 獲取物體完整路徑
 function ObjectSelector:GetObjectPath(obj)
     local path = {}
     local current = obj
@@ -332,22 +315,14 @@ function ObjectSelector:GetObjectPath(obj)
     return path
 end
 
--- 獲取路徑字符串
 function ObjectSelector:GetPathString(pathTable)
     return table.concat(pathTable, " > ")
 end
 
--- 添加高亮框
 function ObjectSelector:AddHighlight(obj, color)
     if not obj:IsA("BasePart") and not obj:IsA("Model") then return end
-    
-    -- 移除舊的高亮
     local oldHighlight = obj:FindFirstChild("SelectorHighlight")
-    if oldHighlight then
-        oldHighlight:Destroy()
-    end
-    
-    -- 創建新高亮
+    if oldHighlight then oldHighlight:Destroy() end
     local highlight = Instance.new("SelectionBox")
     highlight.Name = "SelectorHighlight"
     highlight.Adornee = obj
@@ -357,143 +332,86 @@ function ObjectSelector:AddHighlight(obj, color)
     highlight.Parent = obj
 end
 
--- 移除高亮框
 function ObjectSelector:RemoveHighlight(obj)
     local highlight = obj:FindFirstChild("SelectorHighlight")
-    if highlight then
-        highlight:Destroy()
-    end
+    if highlight then highlight:Destroy() end
 end
 
--- 選取物體
 function ObjectSelector:SelectObject(obj)
     if not obj then return end
-    
-    -- 檢查是否已經選取
     for _, selected in ipairs(self.selectedObjects) do
-        if selected == obj then
-            return
-        end
+        if selected == obj then return end
     end
-    
-    -- 添加到選取列表
     table.insert(self.selectedObjects, obj)
-    self:AddHighlight(obj, Color3.fromRGB(0, 255, 0)) -- 綠色外框
-    
-    -- 更新所有選取物體列表
+    self:AddHighlight(obj, Color3.fromRGB(0, 255, 0))
     self:UpdateAllSelectedObjects()
     self:UpdateGUI()
     self:UpdatePathDisplay(obj)
 end
 
--- 路徑過濾選取
 function ObjectSelector:FilterByPath(pathIndex, clickedObj)
-    -- 清除之前的路徑過濾
     for _, obj in ipairs(self.pathFilteredObjects) do
         self:RemoveHighlight(obj)
     end
     self.pathFilteredObjects = {}
-    
     local clickedPath = self:GetObjectPath(clickedObj)
     local filterPath = {}
-    for i = 1, pathIndex do
-        table.insert(filterPath, clickedPath[i])
-    end
-    
-    -- 取得點擊物體的名稱（用於同名搜尋）
+    for i = 1, pathIndex do table.insert(filterPath, clickedPath[i]) end
     local targetName = clickedObj.Name
-    
-    -- 遍歷 workspace 找到符合路徑前綴的物體
     local function searchDescendants(parent, currentDepth)
         if currentDepth > #filterPath then return end
-        
         for _, child in ipairs(parent:GetChildren()) do
             local childPath = self:GetObjectPath(child)
-            
-            -- 檢查路徑前綴是否匹配
             local matches = true
             for i = 1, #filterPath do
-                if childPath[i] ~= filterPath[i] then
-                    matches = false
-                    break
-                end
+                if childPath[i] ~= filterPath[i] then matches = false; break end
             end
-            
-            -- 檢查後續路徑是否不同 或 同名物件
             if matches and #childPath > #filterPath then
                 local isDifferent = false
                 local isSameName = (child.Name == targetName)
-                
                 if #childPath > #clickedPath then
                     isDifferent = true
                 else
                     for i = #filterPath + 1, #childPath do
-                        if childPath[i] ~= clickedPath[i] then
-                            isDifferent = true
-                            break
-                        end
+                        if childPath[i] ~= clickedPath[i] then isDifferent = true; break end
                     end
                 end
-                
-                -- 如果路徑不同或是同名物件，就加入
                 if (isDifferent or isSameName) and child ~= clickedObj then
-                    -- 檢查是否已在綠色選取中
                     local isGreenSelected = false
                     for _, selected in ipairs(self.selectedObjects) do
-                        if selected == child then
-                            isGreenSelected = true
-                            break
-                        end
+                        if selected == child then isGreenSelected = true; break end
                     end
-                    
                     if not isGreenSelected then
                         table.insert(self.pathFilteredObjects, child)
-                        self:AddHighlight(child, Color3.fromRGB(255, 255, 255)) -- 白色外框
+                        self:AddHighlight(child, Color3.fromRGB(255, 255, 255))
                     end
                 end
             end
-            
             searchDescendants(child, currentDepth + 1)
         end
     end
-    
     searchDescendants(game.Workspace, 1)
-    
-    -- 更新所有選取物體列表
     self:UpdateAllSelectedObjects()
     self:UpdateGUI()
 end
 
--- 更新所有選取物體列表
 function ObjectSelector:UpdateAllSelectedObjects()
     self.allSelectedObjects = {}
-    
-    -- 添加綠色選取的物體
     for _, obj in ipairs(self.selectedObjects) do
         table.insert(self.allSelectedObjects, obj)
     end
-    
-    -- 添加白色選取的物體
     for _, obj in ipairs(self.pathFilteredObjects) do
         table.insert(self.allSelectedObjects, obj)
     end
 end
 
--- 更新路徑顯示
 function ObjectSelector:UpdatePathDisplay(obj)
     local pathScrollFrame = self.mainFrame:FindFirstChild("PathScrollFrame")
     if not pathScrollFrame then return end
-    
-    -- 清除舊路徑
     for _, child in ipairs(pathScrollFrame:GetChildren()) do
-        if child:IsA("TextButton") then
-            child:Destroy()
-        end
+        if child:IsA("TextButton") then child:Destroy() end
     end
-    
     local path = self:GetObjectPath(obj)
-    
-    -- 創建路徑按鈕
     for i, name in ipairs(path) do
         local pathButton = Instance.new("TextButton")
         pathButton.Name = "PathButton_" .. i
@@ -507,182 +425,280 @@ function ObjectSelector:UpdatePathDisplay(obj)
         pathButton.TextXAlignment = Enum.TextXAlignment.Left
         pathButton.LayoutOrder = i
         pathButton.Parent = pathScrollFrame
-        
         local buttonCorner = Instance.new("UICorner")
         buttonCorner.CornerRadius = UDim.new(0, 6)
         buttonCorner.Parent = pathButton
-        
-        -- 點擊路徑過濾
         pathButton.MouseButton1Click:Connect(function()
             self:FilterByPath(i, obj)
-            -- 視覺反饋
             pathButton.BackgroundColor3 = Color3.fromRGB(0, 150, 255)
             wait(0.2)
             pathButton.BackgroundColor3 = Color3.fromRGB(65, 65, 65)
         end)
-        
-        -- 懸停效果
         pathButton.MouseEnter:Connect(function()
             pathButton.BackgroundColor3 = Color3.fromRGB(90, 90, 90)
         end)
-        
         pathButton.MouseLeave:Connect(function()
             pathButton.BackgroundColor3 = Color3.fromRGB(65, 65, 65)
         end)
     end
-    
-    -- 更新滾動框架大小
     pathScrollFrame.CanvasSize = UDim2.new(0, 0, 0, #path * 31)
 end
 
--- 更新 GUI
+-- ★ 更新 GUI（選取列表含 + 展開按鈕）
 function ObjectSelector:UpdateGUI()
-    local teleportToButton = self.mainFrame:FindFirstChild("TeleportToButton")
+    local teleportToButton  = self.mainFrame:FindFirstChild("TeleportToButton")
     local teleportHereButton = self.mainFrame:FindFirstChild("TeleportHereButton")
-    local listScrollFrame = self.mainFrame:FindFirstChild("ListScrollFrame")
-    
+    local listScrollFrame   = self.mainFrame:FindFirstChild("ListScrollFrame")
+
+    -- 更新傳送按鈕文字（顯示實際作用數量）
+    local activeObjs = self:GetActiveObjects()
+    local soloCount = 0
+    for _ in pairs(self.soloObjects) do soloCount = soloCount + 1 end
+
     if teleportToButton then
-        local count = #self.allSelectedObjects
+        local count = #activeObjs
+        local suffix = soloCount > 0 and string.format(" [單獨:%d]", soloCount) or ""
         if self.isTeleporting then
-            teleportToButton.Text = string.format("⏸ 停止自動傳送 (%d/%d)", self.currentTeleportIndex, count)
+            teleportToButton.Text = string.format("⏸ 停止自動傳送 (%d/%d)%s",
+                self.currentTeleportIndex, count, suffix)
             teleportToButton.BackgroundColor3 = Color3.fromRGB(200, 100, 0)
         else
-            teleportToButton.Text = string.format("🚀 傳送到物體 (%d)", count)
+            teleportToButton.Text = string.format("🚀 傳送到物體 (%d)%s", count, suffix)
             teleportToButton.BackgroundColor3 = Color3.fromRGB(0, 150, 255)
         end
     end
-    
     if teleportHereButton then
-        teleportHereButton.Text = string.format("📦 傳送物體到我 (%d)", #self.allSelectedObjects)
+        local count = #activeObjs
+        local suffix = soloCount > 0 and string.format(" [單獨:%d]", soloCount) or ""
+        teleportHereButton.Text = string.format("📦 傳送物體到我 (%d)%s", count, suffix)
     end
-    
-    -- 更新選取列表 (更大的項目)
-    if listScrollFrame then
-        for _, child in ipairs(listScrollFrame:GetChildren()) do
-            if child:IsA("TextLabel") then
-                child:Destroy()
-            end
-        end
-        
-        for i, obj in ipairs(self.allSelectedObjects) do
-            local isGreen = false
-            for _, selected in ipairs(self.selectedObjects) do
-                if selected == obj then
-                    isGreen = true
-                    break
-                end
-            end
-            
-            local itemLabel = Instance.new("TextLabel")
-            itemLabel.Name = "Item_" .. i
-            itemLabel.Size = UDim2.new(1, -12, 0, 28)
-            itemLabel.BackgroundColor3 = isGreen and Color3.fromRGB(0, 120, 0) or Color3.fromRGB(70, 70, 70)
-            itemLabel.BorderSizePixel = 0
-            itemLabel.Text = (isGreen and "🟢 " or "⬜ ") .. obj.Name
-            itemLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-            itemLabel.TextSize = 15
-            itemLabel.Font = Enum.Font.SourceSans
-            itemLabel.TextXAlignment = Enum.TextXAlignment.Left
-            itemLabel.LayoutOrder = i
-            itemLabel.Parent = listScrollFrame
-            
-            local itemCorner = Instance.new("UICorner")
-            itemCorner.CornerRadius = UDim.new(0, 6)
-            itemCorner.Parent = itemLabel
-        end
-        
-        listScrollFrame.CanvasSize = UDim2.new(0, 0, 0, #self.allSelectedObjects * 31)
+
+    if not listScrollFrame then return end
+
+    -- 清除舊列表項目（只清 Frame 類型）
+    for _, child in ipairs(listScrollFrame:GetChildren()) do
+        if child:IsA("Frame") then child:Destroy() end
     end
+
+    -- ★ 每個物件建一個 Frame，右側放 "+" 按鈕，展開後向左出現兩個按鈕
+    local ITEM_H = 32  -- 每列高度
+    for i, obj in ipairs(self.allSelectedObjects) do
+        local isGreen = false
+        for _, selected in ipairs(self.selectedObjects) do
+            if selected == obj then isGreen = true; break end
+        end
+        local isSolo = self.soloObjects[obj] == true
+
+        -- 外層 Frame（作為列表行）
+        local rowFrame = Instance.new("Frame")
+        rowFrame.Name = "Row_" .. i
+        rowFrame.Size = UDim2.new(1, -12, 0, ITEM_H)
+        rowFrame.BackgroundColor3 = isSolo
+            and Color3.fromRGB(180, 100, 0)   -- 單獨選取：橘色背景
+            or (isGreen and Color3.fromRGB(0, 100, 0) or Color3.fromRGB(60, 60, 60))
+        rowFrame.BorderSizePixel = 0
+        rowFrame.LayoutOrder = i
+        rowFrame.ClipsDescendants = false
+        rowFrame.Parent = listScrollFrame
+        local rowCorner = Instance.new("UICorner")
+        rowCorner.CornerRadius = UDim.new(0, 6)
+        rowCorner.Parent = rowFrame
+
+        -- 物件名稱標籤（佔主體寬度，右側留給 + 按鈕）
+        local nameLabel = Instance.new("TextLabel")
+        nameLabel.Name = "NameLabel"
+        nameLabel.Size = UDim2.new(1, -36, 1, 0)
+        nameLabel.Position = UDim2.new(0, 6, 0, 0)
+        nameLabel.BackgroundTransparency = 1
+        nameLabel.Text = (isSolo and "★ " or (isGreen and "🟢 " or "⬜ ")) .. obj.Name
+        nameLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+        nameLabel.TextSize = 14
+        nameLabel.Font = Enum.Font.SourceSans
+        nameLabel.TextXAlignment = Enum.TextXAlignment.Left
+        nameLabel.TextTruncate = Enum.TextTruncate.AtEnd
+        nameLabel.Parent = rowFrame
+
+        -- ★ "+" 展開按鈕（右側）
+        local plusBtn = Instance.new("TextButton")
+        plusBtn.Name = "PlusBtn"
+        plusBtn.Size = UDim2.new(0, 28, 0, 26)
+        plusBtn.Position = UDim2.new(1, -30, 0, 3)
+        plusBtn.BackgroundColor3 = Color3.fromRGB(80, 80, 80)
+        plusBtn.Text = "+"
+        plusBtn.TextColor3 = Color3.fromRGB(200, 200, 200)
+        plusBtn.TextSize = 18
+        plusBtn.Font = Enum.Font.SourceSansBold
+        plusBtn.ZIndex = 5
+        plusBtn.Parent = rowFrame
+        local plusCorner = Instance.new("UICorner")
+        plusCorner.CornerRadius = UDim.new(0, 5)
+        plusCorner.Parent = plusBtn
+
+        -- ★ 展開容器（預設隱藏，按 + 後顯示，向左伸出）
+        local expandFrame = Instance.new("Frame")
+        expandFrame.Name = "ExpandFrame"
+        expandFrame.Size = UDim2.new(0, 200, 0, 26)   -- 容納兩個按鈕
+        expandFrame.Position = UDim2.new(1, -232, 0, 3) -- 在 + 按鈕左側
+        expandFrame.BackgroundTransparency = 1
+        expandFrame.Visible = false
+        expandFrame.ZIndex = 10
+        expandFrame.ClipsDescendants = false
+        expandFrame.Parent = rowFrame
+
+        -- ★ 按鈕1：「單獨選取」/ 「解除單獨選取」
+        local soloBtn = Instance.new("TextButton")
+        soloBtn.Name = "SoloBtn"
+        soloBtn.Size = UDim2.new(0, 94, 1, 0)
+        soloBtn.Position = UDim2.new(0, 0, 0, 0)
+        soloBtn.BackgroundColor3 = isSolo
+            and Color3.fromRGB(200, 100, 0)
+            or  Color3.fromRGB(0, 130, 200)
+        soloBtn.Text = isSolo and "解除單獨選取" or "單獨選取"
+        soloBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+        soloBtn.TextSize = 11
+        soloBtn.Font = Enum.Font.SourceSansBold
+        soloBtn.ZIndex = 11
+        soloBtn.Parent = expandFrame
+        local soloBtnCorner = Instance.new("UICorner")
+        soloBtnCorner.CornerRadius = UDim.new(0, 5)
+        soloBtnCorner.Parent = soloBtn
+
+        -- ★ 按鈕2：「解除選取」
+        local deselBtn = Instance.new("TextButton")
+        deselBtn.Name = "DeselBtn"
+        deselBtn.Size = UDim2.new(0, 86, 1, 0)
+        deselBtn.Position = UDim2.new(0, 98, 0, 0)
+        deselBtn.BackgroundColor3 = Color3.fromRGB(180, 40, 40)
+        deselBtn.Text = "解除選取"
+        deselBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+        deselBtn.TextSize = 11
+        deselBtn.Font = Enum.Font.SourceSansBold
+        deselBtn.ZIndex = 11
+        deselBtn.Parent = expandFrame
+        local deselBtnCorner = Instance.new("UICorner")
+        deselBtnCorner.CornerRadius = UDim.new(0, 5)
+        deselBtnCorner.Parent = deselBtn
+
+        -- ★ + 按鈕點擊：切換展開狀態
+        local expanded = false
+        plusBtn.MouseButton1Click:Connect(function()
+            expanded = not expanded
+            expandFrame.Visible = expanded
+            plusBtn.Text = expanded and "−" or "+"
+            plusBtn.BackgroundColor3 = expanded
+                and Color3.fromRGB(120, 60, 0)
+                or  Color3.fromRGB(80, 80, 80)
+        end)
+
+        -- ★ 單獨選取 / 解除單獨選取
+        soloBtn.MouseButton1Click:Connect(function()
+            if self.soloObjects[obj] then
+                -- 解除單獨選取
+                self.soloObjects[obj] = nil
+            else
+                -- 加入單獨選取
+                self.soloObjects[obj] = true
+            end
+            self:UpdateGUI()
+        end)
+
+        -- ★ 解除選取（從 allSelectedObjects 移除）
+        deselBtn.MouseButton1Click:Connect(function()
+            self.soloObjects[obj] = nil
+
+            -- 從綠色清單移除
+            for idx, sel in ipairs(self.selectedObjects) do
+                if sel == obj then table.remove(self.selectedObjects, idx); break end
+            end
+            -- 從路徑過濾清單移除
+            for idx, sel in ipairs(self.pathFilteredObjects) do
+                if sel == obj then table.remove(self.pathFilteredObjects, idx); break end
+            end
+
+            self:RemoveHighlight(obj)
+            self:UpdateAllSelectedObjects()
+            self:UpdateGUI()
+        end)
+    end
+
+    -- 更新滾動高度（每列高度 + 間距3）
+    listScrollFrame.CanvasSize = UDim2.new(0, 0, 0, #self.allSelectedObjects * (ITEM_H + 3))
 end
 
--- 傳送到物體（自動輪流）
+-- ★ 傳送到物體（使用 GetActiveObjects）
 function ObjectSelector:TeleportToObject()
-    if #self.allSelectedObjects == 0 then return end
-    
+    local activeObjs = self:GetActiveObjects()
+    if #activeObjs == 0 then return end
+
     local character = player.Character
     if not character then return end
-    
     local humanoidRootPart = character:FindFirstChild("HumanoidRootPart")
     if not humanoidRootPart then return end
-    
-    -- 開始自動輪流傳送
+
     if not self.isTeleporting then
         self.isTeleporting = true
         self.currentTeleportIndex = 1
-        
-        -- 創建循環傳送
         spawn(function()
-            while self.isTeleporting and #self.allSelectedObjects > 0 do
-                -- 循環索引
-                if self.currentTeleportIndex > #self.allSelectedObjects then
+            while self.isTeleporting do
+                local objs = self:GetActiveObjects()
+                if #objs == 0 then break end
+                if self.currentTeleportIndex > #objs then
                     self.currentTeleportIndex = 1
                 end
-                
-                local targetObj = self.allSelectedObjects[self.currentTeleportIndex]
+                local targetObj = objs[self.currentTeleportIndex]
                 if targetObj then
                     local targetPos
                     if targetObj:IsA("BasePart") then
                         targetPos = targetObj.Position + Vector3.new(0, 5, 0)
                     elseif targetObj:IsA("Model") then
-                        local primaryPart = targetObj.PrimaryPart or targetObj:FindFirstChildWhichIsA("BasePart")
-                        if primaryPart then
-                            targetPos = primaryPart.Position + Vector3.new(0, 5, 0)
-                        end
+                        local pp = targetObj.PrimaryPart or targetObj:FindFirstChildWhichIsA("BasePart")
+                        if pp then targetPos = pp.Position + Vector3.new(0, 5, 0) end
                     end
-                    
                     if targetPos then
                         humanoidRootPart.CFrame = CFrame.new(targetPos)
                         self.currentTeleportIndex = self.currentTeleportIndex + 1
                         self:UpdateGUI()
                     end
                 end
-                
-                wait(0.1) -- 每0.1秒傳送到下一個物體
+                wait(0.1)
             end
-            
             self.isTeleporting = false
             self:UpdateGUI()
         end)
-        
-        -- 更新按鈕文字
-        local teleportToButton = self.mainFrame:FindFirstChild("TeleportToButton")
-        if teleportToButton then
-            teleportToButton.Text = "⏸ 停止自動傳送"
-            teleportToButton.BackgroundColor3 = Color3.fromRGB(200, 100, 0)
+        local btn = self.mainFrame:FindFirstChild("TeleportToButton")
+        if btn then
+            btn.Text = "⏸ 停止自動傳送"
+            btn.BackgroundColor3 = Color3.fromRGB(200, 100, 0)
         end
     else
-        -- 停止自動傳送
         self.isTeleporting = false
         self.currentTeleportIndex = 1
-        
-        local teleportToButton = self.mainFrame:FindFirstChild("TeleportToButton")
-        if teleportToButton then
-            teleportToButton.Text = string.format("🚀 傳送到物體 (1/%d)", #self.allSelectedObjects)
-            teleportToButton.BackgroundColor3 = Color3.fromRGB(0, 150, 255)
+        local btn = self.mainFrame:FindFirstChild("TeleportToButton")
+        if btn then
+            btn.Text = string.format("🚀 傳送到物體 (1/%d)", #activeObjs)
+            btn.BackgroundColor3 = Color3.fromRGB(0, 150, 255)
         end
     end
 end
 
--- 傳送物體到玩家（所有物體到同一位置）
+-- ★ 傳送物體到玩家（使用 GetActiveObjects）
 function ObjectSelector:TeleportObjectsHere()
-    if #self.allSelectedObjects == 0 then return end
-    
+    local activeObjs = self:GetActiveObjects()
+    if #activeObjs == 0 then return end
+
     local character = player.Character
     if not character then return end
-    
     local humanoidRootPart = character:FindFirstChild("HumanoidRootPart")
     if not humanoidRootPart then return end
-    
+
     local playerPos = humanoidRootPart.Position
-    local targetPos = playerPos + Vector3.new(0, 2, 5) -- 玩家前方
-    
-    -- 將所有選取的物體傳送到同一位置
-    for _, obj in ipairs(self.allSelectedObjects) do
+    local targetPos = playerPos + Vector3.new(0, 2, 5)
+
+    for _, obj in ipairs(activeObjs) do
         if obj:IsA("BasePart") then
             obj.CFrame = CFrame.new(targetPos)
         elseif obj:IsA("Model") then
-            local primaryPart = obj.PrimaryPart or obj:FindFirstChildWhichIsA("BasePart")
-            if primaryPart then
+            if obj.PrimaryPart or obj:FindFirstChildWhichIsA("BasePart") then
                 obj:MoveTo(targetPos)
             end
         end
@@ -691,30 +707,18 @@ end
 
 -- 清除所有選取
 function ObjectSelector:ClearAllSelections()
-    -- 清除綠色選取
-    for _, obj in ipairs(self.selectedObjects) do
-        self:RemoveHighlight(obj)
-    end
+    for _, obj in ipairs(self.selectedObjects) do self:RemoveHighlight(obj) end
     self.selectedObjects = {}
-    
-    -- 清除白色選取
-    for _, obj in ipairs(self.pathFilteredObjects) do
-        self:RemoveHighlight(obj)
-    end
+    for _, obj in ipairs(self.pathFilteredObjects) do self:RemoveHighlight(obj) end
     self.pathFilteredObjects = {}
-    
     self.allSelectedObjects = {}
+    self.soloObjects = {}  -- ★ 也清空單獨選取
     self.currentTeleportIndex = 1
-    
     self:UpdateGUI()
-    
-    -- 清除路徑顯示
     local pathScrollFrame = self.mainFrame:FindFirstChild("PathScrollFrame")
     if pathScrollFrame then
         for _, child in ipairs(pathScrollFrame:GetChildren()) do
-            if child:IsA("TextButton") then
-                child:Destroy()
-            end
+            if child:IsA("TextButton") then child:Destroy() end
         end
     end
 end
@@ -722,24 +726,15 @@ end
 -- 處理觸控選取
 function ObjectSelector:HandleTouchSelection(input)
     if not self.isSelectionMode then return end
-    
-    -- 從觸控位置發射射線
     local unitRay = camera:ScreenPointToRay(input.Position.X, input.Position.Y)
     local ray = Ray.new(unitRay.Origin, unitRay.Direction * 1000)
-    
-    -- 進行射線檢測
     local target = workspace:FindPartOnRay(ray, player.Character)
-    
     if target then
         self:SelectObject(target)
-        
-        -- 顯示 GUI
         if not self.guiVisible then
             self.guiVisible = true
             self.mainFrame.Visible = true
         end
-        
-        -- 觸覺反饋（如果可用）
         if game:GetService("HapticService"):IsVibrationSupported(Enum.UserInputType.Gamepad1) then
             game:GetService("HapticService"):SetMotor(Enum.UserInputType.Gamepad1, Enum.VibrationMotor.Large, 0.5)
             wait(0.1)
@@ -751,8 +746,7 @@ end
 -- 初始化
 function ObjectSelector:Initialize()
     self:InitializeGUI()
-    
-    -- 創建開啟按鈕（固定在螢幕角落）
+
     local openButton = Instance.new("TextButton")
     openButton.Name = "OpenButton"
     openButton.Size = UDim2.new(0, 60, 0, 60)
@@ -763,56 +757,34 @@ function ObjectSelector:Initialize()
     openButton.Font = Enum.Font.SourceSansBold
     openButton.ZIndex = 10
     openButton.Parent = self.screenGui
-    
     local openCorner = Instance.new("UICorner")
     openCorner.CornerRadius = UDim.new(0, 12)
     openCorner.Parent = openButton
-    
-    -- 添加陰影效果
-    local openShadow = Instance.new("ImageLabel")
-    openShadow.Name = "Shadow"
-    openShadow.Size = UDim2.new(1, 10, 1, 10)
-    openShadow.Position = UDim2.new(0, -5, 0, -5)
-    openShadow.BackgroundTransparency = 1
-    openShadow.Image = "rbxasset://textures/ui/GuiImagePlaceholder.png"
-    openShadow.ImageTransparency = 0.7
-    openShadow.ZIndex = 9
-    openShadow.Parent = openButton
-    
     openButton.MouseButton1Click:Connect(function()
         self.guiVisible = not self.guiVisible
         self.mainFrame.Visible = self.guiVisible
-        
-        -- 按鈕動畫
         openButton:TweenSize(UDim2.new(0, 54, 0, 54), "Out", "Quad", 0.1, true, function()
             openButton:TweenSize(UDim2.new(0, 60, 0, 60), "Out", "Quad", 0.1, true)
         end)
     end)
-    
-    -- 觸控輸入處理
+
     UserInputService.InputBegan:Connect(function(input, gameProcessed)
-        -- 如果輸入被GUI處理，則忽略
         if gameProcessed then return end
-        
-        -- 處理觸控和滑鼠點擊
-        if input.UserInputType == Enum.UserInputType.Touch or 
+        if input.UserInputType == Enum.UserInputType.Touch or
            input.UserInputType == Enum.UserInputType.MouseButton1 then
-            -- 延遲一點確保不是在拖動GUI
             wait(0.05)
             if not self.isDragging then
                 self:HandleTouchSelection(input)
             end
         end
     end)
-    
+
     print("🎯 物體選取器已啟動！(平板觸控版)")
     print("📱 點擊右上角綠色按鈕開啟界面")
     print("👆 觸控物體進行選取（綠色外框）")
     print("📂 點擊路徑可過濾相似物體（白色外框）")
-    print("🚀 可拖動界面移動位置")
+    print("★  點擊列表項目右側 + 可展開單獨選取/解除選取按鈕")
 end
 
--- 啟動腳本
 ObjectSelector:Initialize()
-
 return ObjectSelector
